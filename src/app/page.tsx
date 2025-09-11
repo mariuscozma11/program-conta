@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { CSVParser } from '@/lib/csv-parser';
-import { ExcelParser } from '@/lib/excel-parser';
+import { CSVParser, ANAFInvoiceRecord } from '@/lib/csv-parser';
+import { ExcelParser, ExcelInvoiceRecord } from '@/lib/excel-parser';
 import { ComparisonLogic, ComparisonResult } from '@/lib/comparison-logic';
 import { saveAs } from 'file-saver';
 import * as XLSX from 'xlsx';
@@ -22,7 +22,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [showModal, setShowModal] = useState(false);
-  const [selectedDifference, setSelectedDifference] = useState<any>(null);
+  const [selectedDifference, setSelectedDifference] = useState<{excelRecord: ExcelInvoiceRecord; csvRecord: ANAFInvoiceRecord; differences: string[]} | null>(null);
   const [highlightedMatchKey, setHighlightedMatchKey] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>('');
 
@@ -133,7 +133,7 @@ export default function Home() {
     }
   };
 
-  const addSummarySheet = (workbook: any, result: ComparisonResult) => {
+  const addSummarySheet = (workbook: XLSX.WorkBook, result: ComparisonResult) => {
     const summaryData = [
       ['Raport Comparare Contabilitate'],
       [''],
@@ -154,8 +154,8 @@ export default function Home() {
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Sumar');
   };
 
-  const addDetailedComparisonSheet = (workbook: any, result: ComparisonResult) => {
-    const data: any[][] = [];
+  const addDetailedComparisonSheet = (workbook: XLSX.WorkBook, result: ComparisonResult) => {
+    const data: (string | number)[][] = [];
     
     data.push([
       'Status', 'Nr. Factură', 'Sursă', 'Data Emitere', 'Denumire Emitent', 
@@ -392,8 +392,8 @@ function SideBySideComparison({
   
   const prepareRecordsForComparison = () => {
     // Create separate arrays for each column - only include records that actually exist in that source
-    const excelRecords: any[] = [];
-    const anafRecords: any[] = [];
+    const excelRecords: Array<{record: ExcelInvoiceRecord; status: string; statusLabel: string; sortPriority: number; matchKey: string; differences?: string[]}> = [];
+    const anafRecords: Array<{record: ANAFInvoiceRecord; status: string; statusLabel: string; sortPriority: number; matchKey: string; differences?: string[]}> = [];
     
     // Add perfect matches - these exist in both files
     result.perfectMatches.forEach(match => {
@@ -462,7 +462,7 @@ function SideBySideComparison({
     });
     
     // Sort by priority (errors first), then by date, then by invoice number
-    const sortRecords = (records: any[]) => {
+    const sortRecords = <T extends {record: {dataEmitere: string; nrFactur: string}; sortPriority: number}>(records: T[]) => {
       return records.sort((a, b) => {
         if (a.sortPriority !== b.sortPriority) {
           return a.sortPriority - b.sortPriority;
@@ -484,7 +484,7 @@ function SideBySideComparison({
 
   const { excelRecords, anafRecords } = prepareRecordsForComparison();
 
-  const renderTableRow = (item: any, index: number, type: 'excel' | 'anaf') => {
+  const renderTableRow = (item: {record: ExcelInvoiceRecord | ANAFInvoiceRecord; status: string; statusLabel: string; matchKey: string; differences?: string[]}, index: number, type: 'excel' | 'anaf') => {
     const record = item.record;
     const statusClass = item.status;
     const rowClass = `record-row ${statusClass} ${highlightedMatchKey === item.matchKey ? 'highlighted-match' : ''}`;
@@ -567,7 +567,7 @@ function SideBySideComparison({
 
 // Comparison Modal component
 interface ComparisonModalProps {
-  difference: any;
+  difference: {excelRecord: ExcelInvoiceRecord; csvRecord: ANAFInvoiceRecord; differences: string[]};
   onClose: () => void;
   getFieldClass: (fieldName: string, differences: string[]) => string;
   formatAmount: (amount: string) => string;

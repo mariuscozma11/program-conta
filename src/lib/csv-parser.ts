@@ -45,7 +45,7 @@ export class CSVParser {
     
     // Parse header to get column mapping
     const headers = this.parseCSVLine(lines[0]);
-    let columnMapping: { [key: string]: number } = {};
+    const columnMapping: { [key: string]: number } = {};
     
     // Map our required fields to column indices based on ANAF CSV format
     for (let i = 0; i < headers.length; i++) {
@@ -97,7 +97,7 @@ export class CSVParser {
             records.push(record);
           }
         }
-      } catch (error) {
+      } catch {
         // Skip invalid lines silently
         continue;
       }

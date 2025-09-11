@@ -24,7 +24,7 @@ export class ExcelParser {
       const worksheet = workbook.Sheets[sheetName];
       
       // Convert to JSON array with header row, let XLSX format dates
-      const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false }) as any[][];
+      const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false }) as (string | number | Date)[][];
       
       const records = this.parseExcelData(jsonData);
       return records;
@@ -49,7 +49,7 @@ export class ExcelParser {
     });
   }
   
-  private static parseExcelData(jsonData: any[][]): ExcelInvoiceRecord[] {
+  private static parseExcelData(jsonData: (string | number | Date)[][]): ExcelInvoiceRecord[] {
     const records: ExcelInvoiceRecord[] = [];
     
     if (jsonData.length === 0) return records;
@@ -108,7 +108,7 @@ export class ExcelParser {
         if (record.nrFactur && record.dataEmitere && record.cifEmitent) {
           records.push(record);
         }
-      } catch (error) {
+      } catch {
         // Skip invalid rows silently
         continue;
       }
@@ -117,7 +117,7 @@ export class ExcelParser {
     return records;
   }
 
-  private static formatDateToANAFFormat(dateValue: any): string {
+  private static formatDateToANAFFormat(dateValue: string | number | Date | null | undefined): string {
     if (!dateValue && dateValue !== 0) return '';
     
     try {
