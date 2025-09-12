@@ -292,6 +292,14 @@ h1 {
   color: #e67e22;
 }
 
+.summary-item.transaction-differences {
+  border-color: #3498db;
+}
+
+.summary-item.transaction-differences .count {
+  color: #3498db;
+}
+
 /* Side-by-Side Comparison */
 .side-by-side-comparison {
   display: flex;
@@ -429,6 +437,12 @@ h1 {
   border: 1px solid #e67e22;
 }
 
+.status-indicator.transaction-difference {
+  background-color: #e3f2fd;
+  color: #2196f3;
+  border: 1px solid #2196f3;
+}
+
 /* Row Color Coding */
 .record-row.perfect-match {
   background-color: #d5f4e6 !important;
@@ -464,6 +478,18 @@ h1 {
 
 .record-row.missing-from-excel:hover {
   background-color: #fcd366 !important;
+}
+
+.record-row.transaction-difference {
+  background-color: #e3f2fd !important;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.record-row.transaction-difference:hover {
+  background-color: #bbdefb !important;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(33, 150, 243, 0.2);
 }
 
 /* Enhanced Row Highlighting */

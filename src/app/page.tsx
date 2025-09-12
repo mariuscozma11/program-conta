@@ -89,8 +89,16 @@ export default function Home() {
       return diffKey === matchKey;
     });
 
+    const transactionDifference = comparisonResult.transactionDifferences.find(diff => {
+      const diffKey = createMatchKey(diff.excelRecord.cifEmitent, diff.excelRecord.nrFactur);
+      return diffKey === matchKey;
+    });
+
     if (valueDifference) {
       setSelectedDifference(valueDifference);
+      setShowModal(true);
+    } else if (transactionDifference) {
+      setSelectedDifference(transactionDifference);
       setShowModal(true);
     }
   };
@@ -143,6 +151,7 @@ export default function Home() {
       [''],
       ['Rezultate Comparare:'],
       ['Potriviri Perfecte:', result.perfectMatches.length],
+      ['Diferențe Tranzacție:', result.transactionDifferences.length],
       ['Diferențe de Valori:', result.valueDifferences.length],
       ['Lipsă din ANAF:', result.missingFromCSV.length],
       ['Lipsă din Excel:', result.missingFromExcel.length],
@@ -159,7 +168,7 @@ export default function Home() {
     let totalBazaTVA = 0;
     
     data.push([
-      'Status', 'Nr. Factură', 'Sursă', 'Data Emitere', 'Denumire Emitent', 
+      'Status', 'Nr. Factură', 'Tip Tranzacție', 'Tip Potrivire', 'Sursă', 'Data Emitere', 'Denumire Emitent', 
       'CIF Emitent', 'Cota TVA', 'Bază TVA', 'Diferențe'
     ]);
     
@@ -170,6 +179,8 @@ export default function Home() {
       data.push([
         'POTRIVIRE PERFECTĂ',
         match.excelRecord.nrFactur,
+        match.csvRecord.transactionType === 'V' ? 'Vânzare' : 'Cumpărare',
+        match.matchType === 'exact' ? 'Exactă' : 'Factură',
         'Excel & ANAF',
         match.excelRecord.dataEmitere,
         match.excelRecord.denumireEmitent,
@@ -180,13 +191,15 @@ export default function Home() {
       ]);
     });
     
-    result.valueDifferences.forEach(diff => {
+    result.transactionDifferences.forEach(diff => {
       const excelBazaValue = parseFloat(diff.excelRecord.baza.toString().replace(',', '.')) || 0;
       totalBazaTVA += excelBazaValue;
       
       data.push([
-        'DIFERENȚE VALORI',
+        'DIFERENȚE TRANZACȚIE',
         diff.excelRecord.nrFactur,
+        diff.csvRecord.transactionType === 'V' ? 'Vânzare' : 'Cumpărare',
+        diff.matchType === 'exact' ? 'Exactă' : 'Factură',
         'Excel',
         diff.excelRecord.dataEmitere,
         diff.excelRecord.denumireEmitent,
@@ -199,6 +212,8 @@ export default function Home() {
       data.push([
         '',
         diff.csvRecord.nrFactur,
+        diff.csvRecord.transactionType === 'V' ? 'Vânzare' : 'Cumpărare',
+        diff.matchType === 'exact' ? 'Exactă' : 'Factură',
         'ANAF',
         diff.csvRecord.dataEmitere,
         diff.csvRecord.denumireEmitent,
@@ -208,7 +223,42 @@ export default function Home() {
         ''
       ]);
       
-      data.push(['', '', '', '', '', '', '', '', '']);
+      data.push(['', '', '', '', '', '', '', '', '', '', '']);
+    });
+    
+    result.valueDifferences.forEach(diff => {
+      const excelBazaValue = parseFloat(diff.excelRecord.baza.toString().replace(',', '.')) || 0;
+      totalBazaTVA += excelBazaValue;
+      
+      data.push([
+        'DIFERENȚE VALORI',
+        diff.excelRecord.nrFactur,
+        diff.csvRecord.transactionType === 'V' ? 'Vânzare' : 'Cumpărare',
+        diff.matchType === 'exact' ? 'Exactă' : 'Factură',
+        'Excel',
+        diff.excelRecord.dataEmitere,
+        diff.excelRecord.denumireEmitent,
+        diff.excelRecord.cifEmitent,
+        diff.excelRecord.cotaTVA,
+        diff.excelRecord.baza,
+        diff.differences.join('; ')
+      ]);
+      
+      data.push([
+        '',
+        diff.csvRecord.nrFactur,
+        diff.csvRecord.transactionType === 'V' ? 'Vânzare' : 'Cumpărare',
+        diff.matchType === 'exact' ? 'Exactă' : 'Factură',
+        'ANAF',
+        diff.csvRecord.dataEmitere,
+        diff.csvRecord.denumireEmitent,
+        diff.csvRecord.cifEmitent,
+        diff.csvRecord.cotaTVA,
+        diff.csvRecord.baza,
+        ''
+      ]);
+      
+      data.push(['', '', '', '', '', '', '', '', '', '', '']);
     });
     
     result.missingFromCSV.forEach(record => {
@@ -218,6 +268,8 @@ export default function Home() {
       data.push([
         'LIPSĂ DIN ANAF',
         record.nrFactur,
+        '-',
+        '-',
         'Doar în Excel',
         record.dataEmitere,
         record.denumireEmitent,
@@ -232,6 +284,8 @@ export default function Home() {
       data.push([
         'LIPSĂ DIN EXCEL',
         record.nrFactur,
+        record.transactionType === 'V' ? 'Vânzare' : 'Cumpărare',
+        '-',
         'Doar în ANAF',
         record.dataEmitere,
         record.denumireEmitent,
@@ -243,9 +297,11 @@ export default function Home() {
     });
     
     // Add autosum row
-    data.push(['', '', '', '', '', '', '', '', '']);
+    data.push(['', '', '', '', '', '', '', '', '', '', '']);
     data.push([
       'TOTAL BAZĂ TVA',
+      '',
+      '',
       '',
       '',
       '',
@@ -259,7 +315,7 @@ export default function Home() {
     const worksheet = XLSX.utils.aoa_to_sheet(data);
     
     worksheet['!cols'] = [
-      { wch: 20 }, { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 30 }, 
+      { wch: 20 }, { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 30 }, 
       { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 40 }
     ];
     
@@ -348,6 +404,10 @@ export default function Home() {
                       <span className="count">{comparisonResult.valueDifferences.length}</span>
                       <span className="label">Diferențe Valori</span>
                     </div>
+                    <div className="summary-item transaction-differences">
+                      <span className="count">{comparisonResult.transactionDifferences.length}</span>
+                      <span className="label">Diferențe Tranzacție</span>
+                    </div>
                     <div className="summary-item missing-from-csv">
                       <span className="count">{comparisonResult.missingFromCSV.length}</span>
                       <span className="label">Lipsă din ANAF</span>
@@ -422,31 +482,56 @@ function SideBySideComparison({
     // Add perfect matches - these exist in both files
     result.perfectMatches.forEach(match => {
       const matchKey = createMatchKey(match.excelRecord.cifEmitent, match.excelRecord.nrFactur);
+      const statusLabel = match.matchType === 'exact' ? '✓ Potrivire Exactă' : '✓ Potrivire Factură';
       
       excelRecords.push({
         record: match.excelRecord,
         status: 'perfect-match',
-        statusLabel: '✓ Potrivire',
+        statusLabel: statusLabel,
         sortPriority: 4,
         matchKey: matchKey
       });
       anafRecords.push({
         record: match.csvRecord,
         status: 'perfect-match',
-        statusLabel: '✓ Potrivire',
+        statusLabel: statusLabel,
         sortPriority: 4,
         matchKey: matchKey
       });
     });
     
+    // Add transaction differences - these exist in both files but only differ in company/CIF
+    result.transactionDifferences.forEach(diff => {
+      const matchKey = createMatchKey(diff.excelRecord.cifEmitent, diff.excelRecord.nrFactur);
+      const statusLabel = diff.matchType === 'exact' ? '🔄 Diferență Tranzacție' : '🔄 Diferență Tranzacție';
+      
+      excelRecords.push({
+        record: diff.excelRecord,
+        status: 'transaction-difference',
+        statusLabel: statusLabel,
+        sortPriority: 3,
+        differences: diff.differences,
+        matchKey: matchKey
+      });
+      anafRecords.push({
+        record: diff.csvRecord,
+        status: 'transaction-difference',
+        statusLabel: statusLabel,
+        sortPriority: 3,
+        differences: diff.differences,
+        matchKey: matchKey
+      });
+    });
+
     // Add value differences - these exist in both files but with different values
     result.valueDifferences.forEach(diff => {
       const matchKey = createMatchKey(diff.excelRecord.cifEmitent, diff.excelRecord.nrFactur);
+      const statusLabel = diff.matchType === 'exact' ? '⚠ Diferențe Exacte' : '⚠ Diferențe Factură';
       
       excelRecords.push({
         record: diff.excelRecord,
         status: 'value-difference',
-        statusLabel: '⚠ Diferențe',
+        statusLabel: statusLabel,
         sortPriority: 2,
         differences: diff.differences,
         matchKey: matchKey
@@ -454,7 +539,7 @@ function SideBySideComparison({
       anafRecords.push({
         record: diff.csvRecord,
         status: 'value-difference',
-        statusLabel: '⚠ Diferențe',
+        statusLabel: statusLabel,
         sortPriority: 2,
         differences: diff.differences,
         matchKey: matchKey
@@ -512,7 +597,7 @@ function SideBySideComparison({
     const record = item.record;
     const statusClass = item.status;
     const rowClass = `record-row ${statusClass} ${highlightedMatchKey === item.matchKey ? 'highlighted-match' : ''}`;
-    const isClickable = statusClass === 'value-difference';
+    const isClickable = statusClass === 'value-difference' || statusClass === 'transaction-difference';
     
     return (
       <tr 
@@ -531,6 +616,14 @@ function SideBySideComparison({
           </span>
         </td>
         <td title={record.nrFactur}>{record.nrFactur}</td>
+        {type === 'anaf' && (
+          <td className="transaction-type">
+            {'transactionType' in record ? 
+              (record.transactionType === 'V' ? 'V' : 'C') : 
+              '-'
+            }
+          </td>
+        )}
         <td>{record.dataEmitere}</td>
         <td title={record.denumireEmitent}>{record.denumireEmitent}</td>
         <td>{record.cifEmitent}</td>
@@ -572,6 +665,7 @@ function SideBySideComparison({
               <tr>
                 <th>Status</th>
                 <th>Nr. Factură</th>
+                <th>Tip</th>
                 <th>Data Emitere</th>
                 <th>Denumire Emitent</th>
                 <th>CIF Emitent</th>

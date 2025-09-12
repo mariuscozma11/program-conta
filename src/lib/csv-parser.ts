@@ -5,6 +5,7 @@ export interface ANAFInvoiceRecord {
   cifEmitent: string;      // CIF emitent (without RO prefix)
   cotaTVA: string;         // Cota TVA
   baza: string;            // Baza (VAT base amount)
+  transactionType: 'V' | 'C'; // V = Vânzare (Sale), C = Cumpărare (Purchase)
 }
 
 export class CSVParser {
@@ -51,14 +52,20 @@ export class CSVParser {
     for (let i = 0; i < headers.length; i++) {
       const header = headers[i].toLowerCase().trim();
       // ANAF CSV has specific column names
-      if (header === 'nr_factura') {
+      if (header === 'tip') {
+        columnMapping['transactionType'] = i;
+      } else if (header === 'nr_factura') {
         columnMapping['nrFactur'] = i;
       } else if (header === 'data_emitere') {
         columnMapping['dataEmitere'] = i;
       } else if (header === 'den_vanzator') {
-        columnMapping['denumireEmitent'] = i;
+        columnMapping['den_vanzator'] = i;
       } else if (header === 'vanz_cui') {
-        columnMapping['cifEmitent'] = i;
+        columnMapping['vanz_cui'] = i;
+      } else if (header === 'den_cumparator') {
+        columnMapping['den_cumparator'] = i;
+      } else if (header === 'cump_cui') {
+        columnMapping['cump_cui'] = i;
       } else if (header === 'cota_tva') {
         columnMapping['cotaTVA'] = i;
       } else if (header === 'baza_calcul') {
@@ -75,13 +82,31 @@ export class CSVParser {
         const columns = this.parseCSVLine(line);
         
         if (columns.length >= Math.max(...Object.values(columnMapping))) {
+          const transactionType = columns[columnMapping['transactionType']] || '';
+          
+          // Determine which CIF and name to use based on transaction type
+          let cifEmitent = '';
+          let denumireEmitent = '';
+          
+          if (transactionType === 'V') {
+            // Sale: company is seller, use seller data (company info)
+            cifEmitent = columns[columnMapping['vanz_cui']] || '';
+            denumireEmitent = columns[columnMapping['den_vanzator']] || '';
+          } else if (transactionType === 'C') {
+            // Purchase: company is buyer, but Excel contains supplier info
+            // So we need supplier data (seller in ANAF) to match Excel
+            cifEmitent = columns[columnMapping['vanz_cui']] || '';
+            denumireEmitent = columns[columnMapping['den_vanzator']] || '';
+          }
+          
           const record: ANAFInvoiceRecord = {
             nrFactur: columns[columnMapping['nrFactur']] || '',
             dataEmitere: columns[columnMapping['dataEmitere']] || '',
-            denumireEmitent: columns[columnMapping['denumireEmitent']] || '',
-            cifEmitent: columns[columnMapping['cifEmitent']] || '',
+            denumireEmitent: denumireEmitent,
+            cifEmitent: cifEmitent,
             cotaTVA: columns[columnMapping['cotaTVA']] || '',
-            baza: columns[columnMapping['baza']] || ''
+            baza: columns[columnMapping['baza']] || '',
+            transactionType: transactionType as 'V' | 'C'
           };
           
           // Clean up CIF (remove RO prefix if present)
@@ -92,8 +117,8 @@ export class CSVParser {
           // Clean up amounts (convert comma to dot)
           record.baza = record.baza.replace(',', '.');
           
-          // Only add records with valid data
-          if (record.nrFactur && record.dataEmitere && record.cifEmitent) {
+          // Only add records with valid data and valid transaction type
+          if (record.nrFactur && record.dataEmitere && record.cifEmitent && (transactionType === 'V' || transactionType === 'C')) {
             records.push(record);
           }
         }
