@@ -73,7 +73,7 @@ export default function Home() {
   };
 
   const createMatchKey = (cif: string, nrFactur: string): string => {
-    return `${cif.trim().toUpperCase()}|${nrFactur.trim()}`;
+    return `${cif.trim().toUpperCase()}|${nrFactur.trim().toUpperCase()}`;
   };
 
   const formatAmount = (amount: string): string => {
@@ -156,6 +156,7 @@ export default function Home() {
 
   const addDetailedComparisonSheet = (workbook: XLSX.WorkBook, result: ComparisonResult) => {
     const data: (string | number)[][] = [];
+    let totalBazaTVA = 0;
     
     data.push([
       'Status', 'Nr. Factură', 'Sursă', 'Data Emitere', 'Denumire Emitent', 
@@ -163,6 +164,9 @@ export default function Home() {
     ]);
     
     result.perfectMatches.forEach(match => {
+      const bazaValue = parseFloat(match.excelRecord.baza.toString().replace(',', '.')) || 0;
+      totalBazaTVA += bazaValue;
+      
       data.push([
         'POTRIVIRE PERFECTĂ',
         match.excelRecord.nrFactur,
@@ -177,6 +181,9 @@ export default function Home() {
     });
     
     result.valueDifferences.forEach(diff => {
+      const excelBazaValue = parseFloat(diff.excelRecord.baza.toString().replace(',', '.')) || 0;
+      totalBazaTVA += excelBazaValue;
+      
       data.push([
         'DIFERENȚE VALORI',
         diff.excelRecord.nrFactur,
@@ -205,6 +212,9 @@ export default function Home() {
     });
     
     result.missingFromCSV.forEach(record => {
+      const bazaValue = parseFloat(record.baza.toString().replace(',', '.')) || 0;
+      totalBazaTVA += bazaValue;
+      
       data.push([
         'LIPSĂ DIN ANAF',
         record.nrFactur,
@@ -231,6 +241,20 @@ export default function Home() {
         'Nu există în fișierul Excel'
       ]);
     });
+    
+    // Add autosum row
+    data.push(['', '', '', '', '', '', '', '', '']);
+    data.push([
+      'TOTAL BAZĂ TVA',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      totalBazaTVA.toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      'Suma totală a bazelor TVA din Excel'
+    ]);
     
     const worksheet = XLSX.utils.aoa_to_sheet(data);
     

@@ -87,7 +87,8 @@ export class ComparisonLogic {
   private static createRecordKey(cif: string, nrFactur: string): string {
     // Normalize CIF (remove spaces, convert to uppercase)
     const normalizedCif = cif.trim().toUpperCase();
-    const normalizedNr = nrFactur.trim();
+    // Normalize invoice number (remove spaces, convert to uppercase)
+    const normalizedNr = nrFactur.trim().toUpperCase();
     return `${normalizedCif}|${normalizedNr}`;
   }
 
