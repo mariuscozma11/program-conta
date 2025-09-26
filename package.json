@@ -1,5 +1,5 @@
 {
-  "name": "comparare-conta",
+  "name": "excel-csv-parser",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -9,8 +9,14 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@fontsource/poppins": "^5.2.7",
+    "@mui/icons-material": "^7.3.2",
+    "@mui/material": "^7.3.2",
     "@types/file-saver": "^2.0.7",
     "file-saver": "^2.0.5",
+    "lucide-react": "^0.544.0",
     "next": "15.5.3",
     "react": "19.1.0",
     "react-dom": "19.1.0",

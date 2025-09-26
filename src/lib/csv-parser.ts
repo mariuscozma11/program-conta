@@ -1,20 +1,19 @@
-export interface ANAFInvoiceRecord {
-  nrFactur: string;        // Nr. factur
-  dataEmitere: string;     // Data emitere  
-  denumireEmitent: string; // Denumire emitent
-  cifEmitent: string;      // CIF emitent (without RO prefix)
-  cotaTVA: string;         // Cota TVA
-  baza: string;            // Baza (VAT base amount)
-  transactionType: 'V' | 'C'; // V = Vânzare (Sale), C = Cumpărare (Purchase)
+export interface CSVRecord {
+  [key: string]: string;   // Dynamic record with any column names
+}
+
+export interface CSVParseResult {
+  headers: string[];       // Column headers
+  records: CSVRecord[];    // Data records
 }
 
 export class CSVParser {
   
-  static async parseCSV(csvFile: File): Promise<ANAFInvoiceRecord[]> {
+  static async parseCSV(csvFile: File): Promise<CSVParseResult> {
     try {
       const csvText = await this.fileToText(csvFile);
-      const records = this.parseCSVContent(csvText);
-      return records;
+      const result = this.parseCSVContent(csvText);
+      return result;
     } catch (error) {
       console.error('Error parsing CSV:', error);
       throw new Error(`Failed to parse CSV: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -36,42 +35,16 @@ export class CSVParser {
     });
   }
   
-  private static parseCSVContent(csvText: string): ANAFInvoiceRecord[] {
-    const records: ANAFInvoiceRecord[] = [];
+  private static parseCSVContent(csvText: string): CSVParseResult {
+    const records: CSVRecord[] = [];
     
     // Split into lines
     const lines = csvText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
     
-    if (lines.length === 0) return records;
+    if (lines.length === 0) return { headers: [], records: [] };
     
-    // Parse header to get column mapping
+    // Parse header to get column names
     const headers = this.parseCSVLine(lines[0]);
-    const columnMapping: { [key: string]: number } = {};
-    
-    // Map our required fields to column indices based on ANAF CSV format
-    for (let i = 0; i < headers.length; i++) {
-      const header = headers[i].toLowerCase().trim();
-      // ANAF CSV has specific column names
-      if (header === 'tip') {
-        columnMapping['transactionType'] = i;
-      } else if (header === 'nr_factura') {
-        columnMapping['nrFactur'] = i;
-      } else if (header === 'data_emitere') {
-        columnMapping['dataEmitere'] = i;
-      } else if (header === 'den_vanzator') {
-        columnMapping['den_vanzator'] = i;
-      } else if (header === 'vanz_cui') {
-        columnMapping['vanz_cui'] = i;
-      } else if (header === 'den_cumparator') {
-        columnMapping['den_cumparator'] = i;
-      } else if (header === 'cump_cui') {
-        columnMapping['cump_cui'] = i;
-      } else if (header === 'cota_tva') {
-        columnMapping['cotaTVA'] = i;
-      } else if (header === 'baza_calcul') {
-        columnMapping['baza'] = i;
-      }
-    }
     
     // Parse data rows
     for (let i = 1; i < lines.length; i++) {
@@ -81,46 +54,17 @@ export class CSVParser {
       try {
         const columns = this.parseCSVLine(line);
         
-        if (columns.length >= Math.max(...Object.values(columnMapping))) {
-          const transactionType = columns[columnMapping['transactionType']] || '';
+        if (columns.length > 0) {
+          const record: CSVRecord = {};
           
-          // Determine which CIF and name to use based on transaction type
-          let cifEmitent = '';
-          let denumireEmitent = '';
-          
-          if (transactionType === 'V') {
-            // Sale: company is seller, use seller data (company info)
-            cifEmitent = columns[columnMapping['vanz_cui']] || '';
-            denumireEmitent = columns[columnMapping['den_vanzator']] || '';
-          } else if (transactionType === 'C') {
-            // Purchase: company is buyer, but Excel contains supplier info
-            // So we need supplier data (seller in ANAF) to match Excel
-            cifEmitent = columns[columnMapping['vanz_cui']] || '';
-            denumireEmitent = columns[columnMapping['den_vanzator']] || '';
+          // Map each column to its header
+          for (let j = 0; j < Math.max(headers.length, columns.length); j++) {
+            const header = headers[j] || `Column_${j + 1}`;
+            const value = columns[j] || '';
+            record[header] = value.trim();
           }
           
-          const record: ANAFInvoiceRecord = {
-            nrFactur: columns[columnMapping['nrFactur']] || '',
-            dataEmitere: columns[columnMapping['dataEmitere']] || '',
-            denumireEmitent: denumireEmitent,
-            cifEmitent: cifEmitent,
-            cotaTVA: columns[columnMapping['cotaTVA']] || '',
-            baza: columns[columnMapping['baza']] || '',
-            transactionType: transactionType as 'V' | 'C'
-          };
-          
-          // Clean up CIF (remove RO prefix if present)
-          if (record.cifEmitent.startsWith('RO')) {
-            record.cifEmitent = record.cifEmitent.substring(2);
-          }
-          
-          // Clean up amounts (convert comma to dot)
-          record.baza = record.baza.replace(',', '.');
-          
-          // Only add records with valid data and valid transaction type
-          if (record.nrFactur && record.dataEmitere && record.cifEmitent && (transactionType === 'V' || transactionType === 'C')) {
-            records.push(record);
-          }
+          records.push(record);
         }
       } catch {
         // Skip invalid lines silently
@@ -128,11 +72,57 @@ export class CSVParser {
       }
     }
     
-    return records;
+    return { headers, records };
   }
   
   private static parseCSVLine(line: string): string[] {
-    // ANAF CSV uses pipe (|) as delimiter, much simpler parsing
-    return line.split('|').map(field => field.trim());
+    // Try to detect delimiter (comma, semicolon, pipe, tab)
+    const delimiters = [',', ';', '|', '\t'];
+    let bestDelimiter = ',';
+    let maxFields = 0;
+    
+    for (const delimiter of delimiters) {
+      const fields = line.split(delimiter);
+      if (fields.length > maxFields) {
+        maxFields = fields.length;
+        bestDelimiter = delimiter;
+      }
+    }
+    
+    // Parse CSV line with proper quote handling
+    const fields: string[] = [];
+    const chars = line.split('');
+    let current = '';
+    let inQuotes = false;
+    let i = 0;
+    
+    while (i < chars.length) {
+      const char = chars[i];
+      
+      if (char === '"') {
+        if (inQuotes && chars[i + 1] === '"') {
+          // Escaped quote
+          current += '"';
+          i += 2;
+        } else {
+          // Toggle quote mode
+          inQuotes = !inQuotes;
+          i++;
+        }
+      } else if (char === bestDelimiter && !inQuotes) {
+        // Field separator
+        fields.push(current.trim());
+        current = '';
+        i++;
+      } else {
+        current += char;
+        i++;
+      }
+    }
+    
+    // Add the last field
+    fields.push(current.trim());
+    
+    return fields.map(field => field.replace(/^"(.*)"$/, '$1')); // Remove surrounding quotes
   }
 }

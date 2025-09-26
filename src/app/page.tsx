@@ -1,15 +1,87 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { CSVParser, ANAFInvoiceRecord } from '@/lib/csv-parser';
-import { ExcelParser, ExcelInvoiceRecord } from '@/lib/excel-parser';
-import { ComparisonLogic, ComparisonResult } from '@/lib/comparison-logic';
-import { saveAs } from 'file-saver';
+import { CSVParser, CSVParseResult } from '@/lib/csv-parser';
+import { ExcelParser, ExcelParseResult } from '@/lib/excel-parser';
 import * as XLSX from 'xlsx';
+import { saveAs } from 'file-saver';
+import {
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Container,
+  Typography,
+  TextField,
+  IconButton,
+  Modal,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Chip,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Alert,
+  LinearProgress,
+  Grid,
+  Divider,
+  Tooltip,
+  Badge,
+  Stack
+} from '@mui/material';
+import {
+  Close,
+  CompareArrows,
+  Delete,
+  Visibility,
+  Check,
+  Warning,
+  Upload,
+  TableChart,
+  Analytics,
+  Error as ErrorIcon,
+  Download
+} from '@mui/icons-material';
 
 interface FileState {
   excelFile: File | null;
   csvFile: File | null;
+}
+
+interface ColumnMapping {
+  excel: string;
+  csv: string;
+  color: string;
+}
+
+interface ColumnSelection {
+  excel: string[];
+  csv: string[];
+  mappings: ColumnMapping[];
+}
+
+interface ComparisonResult {
+  matches: Array<{
+    rowIndex: number;
+    csvRowIndex: number;
+    excelRow: {[key: string]: string};
+    csvRow: {[key: string]: string};
+    differences: string[];
+  }>;
+  onlyInExcel: Array<{
+    rowIndex: number;
+    row: {[key: string]: string};
+  }>;
+  onlyInCsv: Array<{
+    rowIndex: number;
+    row: {[key: string]: string};
+  }>;
 }
 
 export default function Home() {
@@ -18,18 +90,30 @@ export default function Home() {
     csvFile: null
   });
   
+  const [excelData, setExcelData] = useState<ExcelParseResult | null>(null);
+  const [csvData, setCsvData] = useState<CSVParseResult | null>(null);
+  const [selectedColumns, setSelectedColumns] = useState<ColumnSelection>({
+    excel: [],
+    csv: [],
+    mappings: []
+  });
   const [comparisonResult, setComparisonResult] = useState<ComparisonResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [showResults, setShowResults] = useState(false);
-  const [showModal, setShowModal] = useState(false);
-  const [selectedDifference, setSelectedDifference] = useState<{excelRecord: ExcelInvoiceRecord; csvRecord: ANAFInvoiceRecord; differences: string[]} | null>(null);
-  const [highlightedMatchKey, setHighlightedMatchKey] = useState<string | null>(null);
+  const [loading, setLoading] = useState<{excel: boolean; csv: boolean; comparing: boolean}>({
+    excel: false,
+    csv: false,
+    comparing: false
+  });
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
+  const [availableColors] = useState<string[]>([
+    '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', 
+    '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9'
+  ]);
 
   const excelInputRef = useRef<HTMLInputElement>(null);
   const csvInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileInput = (event: React.ChangeEvent<HTMLInputElement>, type: 'excel' | 'csv') => {
+  const handleFileInput = async (event: React.ChangeEvent<HTMLInputElement>, type: 'excel' | 'csv') => {
     const file = event.target.files?.[0];
     
     if (file) {
@@ -37,739 +121,1149 @@ export default function Home() {
         ...prev,
         [type === 'excel' ? 'excelFile' : 'csvFile']: file
       }));
+      
+      // Parse file immediately when selected
+      setLoading(prev => ({ ...prev, [type]: true }));
+      setErrorMessage('');
+      
+      try {
+        if (type === 'excel') {
+          const result = await ExcelParser.parseExcel(file);
+          setExcelData(result);
+          setSelectedColumns(prev => ({ ...prev, excel: [], mappings: [] }));
+        } else {
+          const result = await CSVParser.parseCSV(file);
+          setCsvData(result);
+          setSelectedColumns(prev => ({ ...prev, csv: [], mappings: [] }));
+        }
+        setComparisonResult(null);
+      } catch (error) {
+        console.error(`Error parsing ${type} file:`, error);
+        setErrorMessage(`Eroare la procesarea fișierului ${type.toUpperCase()}: ${error instanceof Error ? error.message : 'Eroare necunoscută'}`);
+        if (type === 'excel') {
+          setExcelData(null);
+        } else {
+          setCsvData(null);
+        }
+      } finally {
+        setLoading(prev => ({ ...prev, [type]: false }));
+      }
     } else {
       setFileState(prev => ({
         ...prev,
         [type === 'excel' ? 'excelFile' : 'csvFile']: null
       }));
+      if (type === 'excel') {
+        setExcelData(null);
+        setSelectedColumns(prev => ({ ...prev, excel: [] }));
+      } else {
+        setCsvData(null);
+        setSelectedColumns(prev => ({ ...prev, csv: [] }));
+      }
+      setComparisonResult(null);
     }
-    setErrorMessage('');
   };
 
-  const compareFiles = async () => {
-    if (!fileState.excelFile || !fileState.csvFile) {
+  const clearFile = (type: 'excel' | 'csv') => {
+    if (type === 'excel') {
+      setFileState(prev => ({ ...prev, excelFile: null }));
+      setExcelData(null);
+      setSelectedColumns(prev => ({ ...prev, excel: [] }));
+      if (excelInputRef.current) {
+        excelInputRef.current.value = '';
+      }
+    } else {
+      setFileState(prev => ({ ...prev, csvFile: null }));
+      setCsvData(null);
+      setSelectedColumns(prev => ({ ...prev, csv: [] }));
+      if (csvInputRef.current) {
+        csvInputRef.current.value = '';
+      }
+    }
+    setComparisonResult(null);
+  };
+
+
+  const compareSelectedColumns = () => {
+    if (!excelData || !csvData || selectedColumns.mappings.length === 0) {
+      setErrorMessage('Vă rugăm să mapați cel puțin o pereche de coloane pentru comparare.');
       return;
     }
 
-    setLoading(true);
-    setShowResults(false);
+    setLoading(prev => ({ ...prev, comparing: true }));
     setErrorMessage('');
 
     try {
-      const csvRecords = await CSVParser.parseCSV(fileState.csvFile);
-      const excelRecords = await ExcelParser.parseExcel(fileState.excelFile);
-      
-      const result = ComparisonLogic.compareRecords(excelRecords, csvRecords);
+      const result = performComparison(
+        excelData,
+        csvData,
+        selectedColumns
+      );
       setComparisonResult(result);
-      setShowResults(true);
-      
     } catch (error) {
-      console.error('Error parsing files:', error);
-      setErrorMessage(`Eroare la procesarea fișierelor: ${error instanceof Error ? error.message : 'Eroare necunoscută'}`);
-      setShowResults(true);
+      console.error('Error comparing columns:', error);
+      setErrorMessage(`Eroare în timpul comparării: ${error instanceof Error ? error.message : 'Eroare necunoscută'}`);
     } finally {
-      setLoading(false);
+      setLoading(prev => ({ ...prev, comparing: false }));
     }
   };
 
-  const createMatchKey = (cif: string, nrFactur: string): string => {
-    return `${cif.trim().toUpperCase()}|${nrFactur.trim().toUpperCase()}`;
+  // Helper function to normalize strings for comparison
+  const normalizeString = (str: string): string => {
+    return str.trim().toLowerCase().replace(/\s+/g, ' ');
   };
 
-  const formatAmount = (amount: string): string => {
-    const num = parseFloat(amount);
-    return isNaN(num) ? amount : num.toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  };
-
-  const handleRowClick = (matchKey: string) => {
-    if (!comparisonResult) return;
+  // Helper function to check if two values match using various criteria
+  const valuesMatch = (val1: string, val2: string): boolean => {
+    if (!val1 && !val2) return true; // Both empty
+    if (!val1 || !val2) return false; // One empty
     
-    const valueDifference = comparisonResult.valueDifferences.find(diff => {
-      const diffKey = createMatchKey(diff.excelRecord.cifEmitent, diff.excelRecord.nrFactur);
-      return diffKey === matchKey;
+    const norm1 = normalizeString(val1);
+    const norm2 = normalizeString(val2);
+    
+    // Exact match
+    if (norm1 === norm2) return true;
+    
+    // Partial match (one contains the other)
+    if (norm1.includes(norm2) || norm2.includes(norm1)) return true;
+    
+    // Numeric match
+    const num1 = parseFloat(norm1);
+    const num2 = parseFloat(norm2);
+    if (!isNaN(num1) && !isNaN(num2) && num1 === num2) return true;
+    
+    // Similarity match for text (80% threshold)
+    if (norm1.length > 3 && norm2.length > 3) {
+      const similarity = calculateSimilarity(norm1, norm2);
+      if (similarity > 0.8) return true;
+    }
+    
+    return false;
+  };
+
+  const performComparison = (
+    excel: ExcelParseResult,
+    csv: CSVParseResult,
+    columns: ColumnSelection
+  ): ComparisonResult => {
+    const matches: ComparisonResult['matches'] = [];
+    const onlyInExcel: ComparisonResult['onlyInExcel'] = [];
+    const onlyInCsv: ComparisonResult['onlyInCsv'] = [];
+
+    console.log('=== COMPARISON DEBUG ===');
+    console.log('Excel records:', excel.records.length);
+    console.log('CSV records:', csv.records.length);
+    console.log('Mappings:', columns.mappings);
+
+    if (columns.mappings.length === 0) {
+      console.log('No mappings defined');
+      return { matches, onlyInExcel, onlyInCsv };
+    }
+
+    const usedCsvIndices = new Set<number>();
+    
+    excel.records.forEach((excelRow, excelIndex) => {
+      console.log(`\n--- Excel row ${excelIndex} ---`);
+      
+      let bestMatch: {
+        csvIndex: number;
+        differences: string[];
+        excelData: {[key: string]: string};
+        csvData: {[key: string]: string};
+        score: number;
+      } | null = null;
+      
+      csv.records.forEach((csvRow, csvIndex) => {
+        if (usedCsvIndices.has(csvIndex)) return;
+        
+        const differences: string[] = [];
+        const excelData: {[key: string]: string} = {};
+        const csvData: {[key: string]: string} = {};
+        let matchingFields = 0;
+        
+        // Compare each mapped column
+        columns.mappings.forEach(mapping => {
+          const excelVal = excelRow[mapping.excel] || '';
+          const csvVal = csvRow[mapping.csv] || '';
+          
+          excelData[mapping.excel] = excelVal;
+          csvData[mapping.csv] = csvVal;
+          
+          console.log(`Comparing: "${excelVal}" <-> "${csvVal}"`);
+          
+          if (valuesMatch(excelVal, csvVal)) {
+            matchingFields++;
+            console.log('✓ Match');
+          } else {
+            differences.push(`${mapping.excel} (${excelVal}) ≠ ${mapping.csv} (${csvVal})`);
+            console.log('✗ No match');
+          }
+        });
+        
+        // Calculate match score (higher is better)
+        const score = matchingFields / columns.mappings.length;
+        console.log(`CSV row ${csvIndex}: ${matchingFields}/${columns.mappings.length} fields match (${(score * 100).toFixed(1)}%)`);
+        
+        // Accept matches with at least 50% of fields matching
+        if (score >= 0.5 && (!bestMatch || score > bestMatch.score)) {
+          bestMatch = {
+            csvIndex,
+            differences,
+            excelData,
+            csvData,
+            score
+          };
+        }
+      });
+      
+      if (bestMatch) {
+        const match = bestMatch as {csvIndex: number, differences: string[], excelData: {[key: string]: string}, csvData: {[key: string]: string}, score: number};
+        console.log(`Best match: CSV row ${match.csvIndex} with ${(match.score * 100).toFixed(1)}% match`);
+        usedCsvIndices.add(match.csvIndex);
+        matches.push({
+          rowIndex: excelIndex,
+          csvRowIndex: match.csvIndex,
+          excelRow: match.excelData,
+          csvRow: match.csvData,
+          differences: match.differences
+        });
+      } else {
+        console.log('No match found');
+        const excelData: {[key: string]: string} = {};
+        columns.mappings.forEach(mapping => {
+          excelData[mapping.excel] = excelRow[mapping.excel] || '';
+        });
+        onlyInExcel.push({ rowIndex: excelIndex, row: excelData });
+      }
+    });
+    
+    // Find unmatched CSV rows
+    csv.records.forEach((csvRow, csvIndex) => {
+      if (!usedCsvIndices.has(csvIndex)) {
+        const csvData: {[key: string]: string} = {};
+        columns.mappings.forEach(mapping => {
+          csvData[mapping.csv] = csvRow[mapping.csv] || '';
+        });
+        onlyInCsv.push({ rowIndex: csvIndex, row: csvData });
+      }
     });
 
-    const transactionDifference = comparisonResult.transactionDifferences.find(diff => {
-      const diffKey = createMatchKey(diff.excelRecord.cifEmitent, diff.excelRecord.nrFactur);
-      return diffKey === matchKey;
-    });
+    console.log(`\n=== RESULTS ===`);
+    console.log(`Matches: ${matches.length}`);
+    console.log(`Only in Excel: ${onlyInExcel.length}`);
+    console.log(`Only in CSV: ${onlyInCsv.length}`);
 
-    if (valueDifference) {
-      setSelectedDifference(valueDifference);
-      setShowModal(true);
-    } else if (transactionDifference) {
-      setSelectedDifference(transactionDifference);
-      setShowModal(true);
+    return { matches, onlyInExcel, onlyInCsv };
+  };
+
+  // Calculate string similarity using Levenshtein distance
+  const calculateSimilarity = (str1: string, str2: string): number => {
+    if (str1 === str2) return 1;
+    if (str1.length === 0 || str2.length === 0) return 0;
+    
+    const matrix = Array(str2.length + 1).fill(null).map(() => Array(str1.length + 1).fill(null));
+    
+    for (let i = 0; i <= str1.length; i++) matrix[0][i] = i;
+    for (let j = 0; j <= str2.length; j++) matrix[j][0] = j;
+    
+    for (let j = 1; j <= str2.length; j++) {
+      for (let i = 1; i <= str1.length; i++) {
+        const indicator = str1[i - 1] === str2[j - 1] ? 0 : 1;
+        matrix[j][i] = Math.min(
+          matrix[j][i - 1] + 1,     // deletion
+          matrix[j - 1][i] + 1,     // insertion
+          matrix[j - 1][i - 1] + indicator // substitution
+        );
+      }
     }
+    
+    const maxLength = Math.max(str1.length, str2.length);
+    return (maxLength - matrix[str2.length][str1.length]) / maxLength;
   };
 
-  const hideModal = () => {
-    setShowModal(false);
-    setSelectedDifference(null);
-  };
+  // Excel export function
+  const downloadComparisonReport = () => {
+    if (!comparisonResult || !selectedColumns.mappings.length) return;
 
-  const getFieldClass = (fieldName: string, differences: string[]): string => {
-    const isDifferent = differences.some(diff => diff.toLowerCase().includes(fieldName.toLowerCase()));
-    return isDifferent ? ' different' : ' matching';
-  };
-
-  const downloadComparisonReport = async () => {
-    if (!comparisonResult) {
-      alert('Nu există rezultate de comparare pentru export!');
-      return;
-    }
-
-    try {
-      const workbook = XLSX.utils.book_new();
-      
-      // Add detailed comparison sheet
-      addDetailedComparisonSheet(workbook, comparisonResult);
-      
-      // Add summary sheet
-      addSummarySheet(workbook, comparisonResult);
-      
-      const currentDate = new Date().toISOString().split('T')[0];
-      const filename = `Raport_Comparare_${currentDate}.xlsx`;
-      
-      const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
-      const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      saveAs(blob, filename);
-      
-    } catch (error) {
-      console.error('Error generating Excel report:', error);
-      alert('Eroare la generarea raportului Excel!');
-    }
-  };
-
-  const addSummarySheet = (workbook: XLSX.WorkBook, result: ComparisonResult) => {
+    const workbook = XLSX.utils.book_new();
+    
+    // Create summary sheet
     const summaryData = [
-      ['Raport Comparare Contabilitate'],
+      ['Raport de Comparare - Sumar'],
       [''],
-      ['Fișiere Comparate:'],
-      ['Excel:', fileState.excelFile?.name || 'N/A'],
-      ['CSV ANAF:', fileState.csvFile?.name || 'N/A'],
+      ['Tipul rezultatului', 'Numărul de rânduri'],
+      ['Comparări totale', comparisonResult.matches.length],
+      ['Potriviri perfecte', comparisonResult.matches.filter(m => m.differences.length === 0).length],
+      ['Cu diferențe', comparisonResult.matches.filter(m => m.differences.length > 0).length],
+      ['Doar în Excel', comparisonResult.onlyInExcel.length],
+      ['Doar în CSV', comparisonResult.onlyInCsv.length],
       [''],
-      ['Rezultate Comparare:'],
-      ['Potriviri Perfecte:', result.perfectMatches.length],
-      ['Diferențe Tranzacție:', result.transactionDifferences.length],
-      ['Diferențe de Valori:', result.valueDifferences.length],
-      ['Lipsă din ANAF:', result.missingFromCSV.length],
-      ['Lipsă din Excel:', result.missingFromExcel.length],
-      [''],
-      ['Data Generare:', new Date().toLocaleString('ro-RO')]
+      ['Raport generat pe:', new Date().toLocaleString('ro-RO')]
     ];
     
-    const worksheet = XLSX.utils.aoa_to_sheet(summaryData);
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Sumar');
+    const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
+    XLSX.utils.book_append_sheet(workbook, summarySheet, 'Sumar');
+
+    // Create detailed comparison sheet
+    if (comparisonResult.matches.length > 0) {
+      const headers = [
+        'Rând Excel',
+        'Rând CSV', 
+        'Status',
+        ...selectedColumns.mappings.map(m => `Excel - ${m.excel}`),
+        ...selectedColumns.mappings.map(m => `CSV - ${m.csv}`),
+        'Diferențe'
+      ];
+
+      const comparisonData = [headers];
+      
+      comparisonResult.matches.forEach(match => {
+        const row = [
+          (match.rowIndex + 1).toString(),
+          (match.csvRowIndex + 1).toString(),
+          match.differences.length === 0 ? 'Potrivire perfectă' : 'Cu diferențe',
+          ...selectedColumns.mappings.map(m => match.excelRow[m.excel] || ''),
+          ...selectedColumns.mappings.map(m => match.csvRow[m.csv] || ''),
+          match.differences.join('; ')
+        ];
+        comparisonData.push(row);
+      });
+
+      const comparisonSheet = XLSX.utils.aoa_to_sheet(comparisonData);
+      XLSX.utils.book_append_sheet(workbook, comparisonSheet, 'Comparări Detaliate');
+    }
+
+    // Create "Only in Excel" sheet
+    if (comparisonResult.onlyInExcel.length > 0) {
+      const excelOnlyHeaders = [
+        'Rând Excel',
+        ...selectedColumns.mappings.map(m => `Excel - ${m.excel}`)
+      ];
+      
+      const excelOnlyData = [excelOnlyHeaders];
+      
+      comparisonResult.onlyInExcel.forEach(item => {
+        const row = [
+          (item.rowIndex + 1).toString(),
+          ...selectedColumns.mappings.map(m => item.row[m.excel] || '')
+        ];
+        excelOnlyData.push(row);
+      });
+
+      const excelOnlySheet = XLSX.utils.aoa_to_sheet(excelOnlyData);
+      XLSX.utils.book_append_sheet(workbook, excelOnlySheet, 'Doar în Excel');
+    }
+
+    // Create "Only in CSV" sheet
+    if (comparisonResult.onlyInCsv.length > 0) {
+      const csvOnlyHeaders = [
+        'Rând CSV',
+        ...selectedColumns.mappings.map(m => `CSV - ${m.csv}`)
+      ];
+      
+      const csvOnlyData = [csvOnlyHeaders];
+      
+      comparisonResult.onlyInCsv.forEach(item => {
+        const row = [
+          (item.rowIndex + 1).toString(),
+          ...selectedColumns.mappings.map(m => item.row[m.csv] || '')
+        ];
+        csvOnlyData.push(row);
+      });
+
+      const csvOnlySheet = XLSX.utils.aoa_to_sheet(csvOnlyData);
+      XLSX.utils.book_append_sheet(workbook, csvOnlySheet, 'Doar în CSV');
+    }
+
+    // Generate file and download
+    const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+    const data = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const fileName = `Raport_Comparare_${new Date().toISOString().split('T')[0]}.xlsx`;
+    saveAs(data, fileName);
   };
 
-  const addDetailedComparisonSheet = (workbook: XLSX.WorkBook, result: ComparisonResult) => {
-    const data: (string | number)[][] = [];
-    let totalBazaTVA = 0;
-    
-    data.push([
-      'Status', 'Nr. Factură', 'Tip Tranzacție', 'Tip Potrivire', 'Sursă', 'Data Emitere', 'Denumire Emitent', 
-      'CIF Emitent', 'Cota TVA', 'Bază TVA', 'Diferențe'
-    ]);
-    
-    result.perfectMatches.forEach(match => {
-      const bazaValue = parseFloat(match.excelRecord.baza.toString().replace(',', '.')) || 0;
-      totalBazaTVA += bazaValue;
-      
-      data.push([
-        'POTRIVIRE PERFECTĂ',
-        match.excelRecord.nrFactur,
-        match.csvRecord.transactionType === 'V' ? 'Vânzare' : 'Cumpărare',
-        match.matchType === 'exact' ? 'Exactă' : 'Factură',
-        'Excel & ANAF',
-        match.excelRecord.dataEmitere,
-        match.excelRecord.denumireEmitent,
-        match.excelRecord.cifEmitent,
-        match.excelRecord.cotaTVA,
-        match.excelRecord.baza,
-        'Toate câmpurile se potrivesc'
-      ]);
-    });
-    
-    result.transactionDifferences.forEach(diff => {
-      const excelBazaValue = parseFloat(diff.excelRecord.baza.toString().replace(',', '.')) || 0;
-      totalBazaTVA += excelBazaValue;
-      
-      data.push([
-        'DIFERENȚE TRANZACȚIE',
-        diff.excelRecord.nrFactur,
-        diff.csvRecord.transactionType === 'V' ? 'Vânzare' : 'Cumpărare',
-        diff.matchType === 'exact' ? 'Exactă' : 'Factură',
-        'Excel',
-        diff.excelRecord.dataEmitere,
-        diff.excelRecord.denumireEmitent,
-        diff.excelRecord.cifEmitent,
-        diff.excelRecord.cotaTVA,
-        diff.excelRecord.baza,
-        diff.differences.join('; ')
-      ]);
-      
-      data.push([
-        '',
-        diff.csvRecord.nrFactur,
-        diff.csvRecord.transactionType === 'V' ? 'Vânzare' : 'Cumpărare',
-        diff.matchType === 'exact' ? 'Exactă' : 'Factură',
-        'ANAF',
-        diff.csvRecord.dataEmitere,
-        diff.csvRecord.denumireEmitent,
-        diff.csvRecord.cifEmitent,
-        diff.csvRecord.cotaTVA,
-        diff.csvRecord.baza,
-        ''
-      ]);
-      
-      data.push(['', '', '', '', '', '', '', '', '', '', '']);
-    });
-    
-    result.valueDifferences.forEach(diff => {
-      const excelBazaValue = parseFloat(diff.excelRecord.baza.toString().replace(',', '.')) || 0;
-      totalBazaTVA += excelBazaValue;
-      
-      data.push([
-        'DIFERENȚE VALORI',
-        diff.excelRecord.nrFactur,
-        diff.csvRecord.transactionType === 'V' ? 'Vânzare' : 'Cumpărare',
-        diff.matchType === 'exact' ? 'Exactă' : 'Factură',
-        'Excel',
-        diff.excelRecord.dataEmitere,
-        diff.excelRecord.denumireEmitent,
-        diff.excelRecord.cifEmitent,
-        diff.excelRecord.cotaTVA,
-        diff.excelRecord.baza,
-        diff.differences.join('; ')
-      ]);
-      
-      data.push([
-        '',
-        diff.csvRecord.nrFactur,
-        diff.csvRecord.transactionType === 'V' ? 'Vânzare' : 'Cumpărare',
-        diff.matchType === 'exact' ? 'Exactă' : 'Factură',
-        'ANAF',
-        diff.csvRecord.dataEmitere,
-        diff.csvRecord.denumireEmitent,
-        diff.csvRecord.cifEmitent,
-        diff.csvRecord.cotaTVA,
-        diff.csvRecord.baza,
-        ''
-      ]);
-      
-      data.push(['', '', '', '', '', '', '', '', '', '', '']);
-    });
-    
-    result.missingFromCSV.forEach(record => {
-      const bazaValue = parseFloat(record.baza.toString().replace(',', '.')) || 0;
-      totalBazaTVA += bazaValue;
-      
-      data.push([
-        'LIPSĂ DIN ANAF',
-        record.nrFactur,
-        '-',
-        '-',
-        'Doar în Excel',
-        record.dataEmitere,
-        record.denumireEmitent,
-        record.cifEmitent,
-        record.cotaTVA,
-        record.baza,
-        'Nu există în fișierul ANAF'
-      ]);
-    });
-    
-    result.missingFromExcel.forEach(record => {
-      data.push([
-        'LIPSĂ DIN EXCEL',
-        record.nrFactur,
-        record.transactionType === 'V' ? 'Vânzare' : 'Cumpărare',
-        '-',
-        'Doar în ANAF',
-        record.dataEmitere,
-        record.denumireEmitent,
-        record.cifEmitent,
-        record.cotaTVA,
-        record.baza,
-        'Nu există în fișierul Excel'
-      ]);
-    });
-    
-    // Add autosum row
-    data.push(['', '', '', '', '', '', '', '', '', '', '']);
-    data.push([
-      'TOTAL BAZĂ TVA',
-      '',
-      '',
-      '',
-      '',
-      '',
-      '',
-      '',
-      '',
-      totalBazaTVA.toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-      'Suma totală a bazelor TVA din Excel'
-    ]);
-    
-    const worksheet = XLSX.utils.aoa_to_sheet(data);
-    
-    worksheet['!cols'] = [
-      { wch: 20 }, { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 30 }, 
-      { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 40 }
-    ];
-    
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Comparare Detaliată');
-  };
-
-  const canCompare = fileState.excelFile !== null && fileState.csvFile !== null;
+  const canCompare = excelData && csvData && selectedColumns.mappings.length > 0;
 
   return (
-    <div className="container">
-      <h1>Program Comparare Contabilitate</h1>
-      <p>Compară fișierele Excel (contabilitate) cu CSV (ANAF)</p>
+    <Container maxWidth="xl" sx={{ py: 4 }}>
+      <Box sx={{ mb: 4 }}>
+        <Typography variant="h3" component="h1" gutterBottom align="center" color="primary">
+          Instrument de Comparare Coloane Excel și CSV
+        </Typography>
+        <Typography variant="h6" align="center" color="text.secondary" sx={{ mb: 4 }}>
+          Încărcați fișiere Excel și CSV, selectați coloanele de comparat și vizualizați diferențele
+        </Typography>
+      </Box>
       
-      <div className="file-input-section">
-        <div className="input-group">
-          <label htmlFor="excel-file">Excel Contabilitate:</label>
-          <input 
-            type="file" 
-            id="excel-file" 
-            accept=".xls,.xlsx,.csv" 
-            ref={excelInputRef}
-            onChange={(e) => handleFileInput(e, 'excel')}
-          />
-          <span className="filename-display" style={{ color: fileState.excelFile ? '#27ae60' : '#666' }}>
-            {fileState.excelFile ? `Fișier selectat: ${fileState.excelFile.name}` : ''}
-          </span>
-        </div>
+      <Grid container spacing={3} sx={{ mb: 4 }}>
+        <Grid size={{ xs: 12, md: 6 }}>
+          <Card elevation={3}>
+            <CardContent>
+              <Stack spacing={2}>
+                <Typography variant="h6" component="h2" color="primary">
+                  <TableChart sx={{ mr: 1, verticalAlign: 'middle' }} />
+                  Fișier Excel
+                </Typography>
+                <input
+                  type="file"
+                  id="excel-file"
+                  accept=".xls,.xlsx"
+                  ref={excelInputRef}
+                  onChange={(e) => handleFileInput(e, 'excel')}
+                  disabled={loading.excel}
+                  style={{ display: 'none' }}
+                />
+                <label htmlFor="excel-file">
+                  <Button
+                    variant="outlined"
+                    component="span"
+                    startIcon={<Upload />}
+                    disabled={loading.excel}
+                    fullWidth
+                    size="large"
+                  >
+                    Selectați fișierul Excel
+                  </Button>
+                </label>
+                {loading.excel && <LinearProgress />}
+                {fileState.excelFile && (
+                  <Alert 
+                    severity="success" 
+                    action={
+                      <IconButton 
+                        color="inherit" 
+                        size="small" 
+                        onClick={() => clearFile('excel')}
+                        disabled={loading.excel}
+                      >
+                        <Close fontSize="inherit" />
+                      </IconButton>
+                    }
+                  >
+                    {fileState.excelFile.name}
+                  </Alert>
+                )}
+              </Stack>
+            </CardContent>
+          </Card>
+        </Grid>
         
-        <div className="input-group">
-          <label htmlFor="csv-file">CSV Document ANAF:</label>
-          <input 
-            type="file" 
-            id="csv-file" 
-            accept=".csv" 
-            ref={csvInputRef}
-            onChange={(e) => handleFileInput(e, 'csv')}
-          />
-          <span className="filename-display" style={{ color: fileState.csvFile ? '#27ae60' : '#666' }}>
-            {fileState.csvFile ? `Fișier selectat: ${fileState.csvFile.name}` : ''}
-          </span>
-        </div>
-      </div>
+        <Grid size={{ xs: 12, md: 6 }}>
+          <Card elevation={3}>
+            <CardContent>
+              <Stack spacing={2}>
+                <Typography variant="h6" component="h2" color="primary">
+                  <Analytics sx={{ mr: 1, verticalAlign: 'middle' }} />
+                  Fișier CSV
+                </Typography>
+                <input
+                  type="file"
+                  id="csv-file"
+                  accept=".csv"
+                  ref={csvInputRef}
+                  onChange={(e) => handleFileInput(e, 'csv')}
+                  disabled={loading.csv}
+                  style={{ display: 'none' }}
+                />
+                <label htmlFor="csv-file">
+                  <Button
+                    variant="outlined"
+                    component="span"
+                    startIcon={<Upload />}
+                    disabled={loading.csv}
+                    fullWidth
+                    size="large"
+                  >
+                    Selectați fișierul CSV
+                  </Button>
+                </label>
+                {loading.csv && <LinearProgress />}
+                {fileState.csvFile && (
+                  <Alert 
+                    severity="success" 
+                    action={
+                      <IconButton 
+                        color="inherit" 
+                        size="small" 
+                        onClick={() => clearFile('csv')}
+                        disabled={loading.csv}
+                      >
+                        <Close fontSize="inherit" />
+                      </IconButton>
+                    }
+                  >
+                    {fileState.csvFile.name}
+                  </Alert>
+                )}
+              </Stack>
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
       
-      <div className="action-section">
-        <button 
-          className="compare-btn" 
-          disabled={!canCompare || loading}
-          onClick={compareFiles}
-        >
-          Compară Fișierele
-        </button>
-      </div>
-      
-      {loading && (
-        <div className="loading">
-          <div className="spinner"></div>
-          <p>Se procesează fișierele...</p>
-        </div>
+      {errorMessage && (
+        <Alert severity="error" sx={{ mb: 3 }}>
+          {errorMessage}
+        </Alert>
       )}
 
-      {showResults && (
-        <div className="results-section">
-          <h2>Rezultate Comparare</h2>
+      {(excelData || csvData) && (
+        <>
+          <Paper elevation={3} sx={{ p: 3, mb: 3 }}>
+            <Typography variant="h5" component="h3" gutterBottom color="primary">
+              Maparea Coloanelor
+            </Typography>
+            <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
+              Selectați coloanele din Excel și CSV care trebuie comparate. Folosiți aceeași culoare pentru a mapa coloanele care se compară între ele.
+            </Typography>
+            
+            <ColumnMappingInterface 
+              excelData={excelData}
+              csvData={csvData}
+              selectedColumns={selectedColumns}
+              setSelectedColumns={setSelectedColumns}
+              availableColors={availableColors}
+            />
+            
+            {(excelData || csvData) && (
+              <Box sx={{ mt: 3, textAlign: 'center' }}>
+                <Button
+                  variant="outlined"
+                  startIcon={<Visibility />}
+                  onClick={() => setIsModalOpen(true)}
+                  size="large"
+                >
+                  Vezi Tabelele Complete
+                </Button>
+              </Box>
+            )}
+          </Paper>
           
-          {errorMessage && (
-            <div className="summary">
-              <p className="error">{errorMessage}</p>
-            </div>
-          )}
+          <Box sx={{ textAlign: 'center', mb: 4 }}>
+            <Button
+              variant="contained"
+              startIcon={<CompareArrows />}
+              onClick={compareSelectedColumns}
+              disabled={!canCompare || loading.comparing}
+              size="large"
+              sx={{ minWidth: 250 }}
+            >
+              {loading.comparing ? 'Se compară...' : 'Compară Coloanele Selectate'}
+            </Button>
+          </Box>
+        </>
+      )}
 
-          {comparisonResult && (
-            <>
-              <div className="summary">
-                <div className="comparison-header">
-                  <h3>Rezultate Comparare Contabilitate</h3>
-                  <div className="file-info">
-                    <span><strong>Excel:</strong> {fileState.excelFile!.name}</span>
-                    <span><strong>CSV ANAF:</strong> {fileState.csvFile!.name}</span>
-                  </div>
-                  <div className="comparison-summary">
+      {comparisonResult && (
+        <div className="comparison-results">
+          <h2>Rezultatele Comparării</h2>
+          
+          <div className="comparison-summary">
+            <div className="summary-item matches">
+              <span className="count">{comparisonResult.matches.length}</span>
+              <span className="label">Comparări Totale</span>
+            </div>
                     <div className="summary-item perfect-matches">
-                      <span className="count">{comparisonResult.perfectMatches.length}</span>
+              <span className="count">{comparisonResult.matches.filter(m => m.differences.length === 0).length}</span>
                       <span className="label">Potriviri Perfecte</span>
                     </div>
-                    <div className="summary-item value-differences">
-                      <span className="count">{comparisonResult.valueDifferences.length}</span>
-                      <span className="label">Diferențe Valori</span>
+            <div className="summary-item differences">
+              <span className="count">{comparisonResult.matches.filter(m => m.differences.length > 0).length}</span>
+              <span className="label">Cu Diferențe</span>
                     </div>
-                    <div className="summary-item transaction-differences">
-                      <span className="count">{comparisonResult.transactionDifferences.length}</span>
-                      <span className="label">Diferențe Tranzacție</span>
+            <div className="summary-item only-excel">
+              <span className="count">{comparisonResult.onlyInExcel.length}</span>
+              <span className="label">Doar în Excel</span>
                     </div>
-                    <div className="summary-item missing-from-csv">
-                      <span className="count">{comparisonResult.missingFromCSV.length}</span>
-                      <span className="label">Lipsă din ANAF</span>
-                    </div>
-                    <div className="summary-item missing-from-excel">
-                      <span className="count">{comparisonResult.missingFromExcel.length}</span>
-                      <span className="label">Lipsă din Excel</span>
-                    </div>
-                  </div>
+            <div className="summary-item only-csv">
+              <span className="count">{comparisonResult.onlyInCsv.length}</span>
+              <span className="label">Doar în CSV</span>
                 </div>
               </div>
               
-              <div className="details">
-                {/* Side-by-side comparison will go here */}
-                <SideBySideComparison 
+          <ComparisonResultsTable 
                   result={comparisonResult}
-                  onRowClick={handleRowClick}
-                  highlightedMatchKey={highlightedMatchKey}
-                  setHighlightedMatchKey={setHighlightedMatchKey}
-                  formatAmount={formatAmount}
-                  createMatchKey={createMatchKey}
-                />
-              </div>
-
-              <div className="download-section">
-                <button className="download-btn" onClick={downloadComparisonReport}>
-                  Descarcă Raport Excel
-                </button>
-              </div>
-            </>
-          )}
+            mappings={selectedColumns.mappings}
+          />
+          
+          <Box sx={{ mt: 4, textAlign: 'center' }}>
+            <Button
+              variant="contained"
+              color="success"
+              size="large"
+              startIcon={<Download />}
+              onClick={downloadComparisonReport}
+              sx={{ 
+                minWidth: 300,
+                py: 1.5,
+                fontSize: '1.1rem',
+                fontWeight: 600
+              }}
+            >
+              Descarcă Raport Comparare
+            </Button>
+          </Box>
         </div>
       )}
 
-      {/* Comparison Modal */}
-      {showModal && selectedDifference && (
-        <ComparisonModal 
-          difference={selectedDifference}
-          onClose={hideModal}
-          getFieldClass={getFieldClass}
-          formatAmount={formatAmount}
+      {/* Fullscreen Modal for Tables */}
+      {isModalOpen && (
+        <FullscreenTableModal
+          excelData={excelData}
+          csvData={csvData}
+          selectedColumns={selectedColumns}
+          setSelectedColumns={setSelectedColumns}
+          onClose={() => setIsModalOpen(false)}
         />
+      )}
+    </Container>
+  );
+}
+
+// Column Mapping Interface Component
+interface ColumnMappingInterfaceProps {
+  excelData: ExcelParseResult | null;
+  csvData: CSVParseResult | null;
+  selectedColumns: ColumnSelection;
+  setSelectedColumns: React.Dispatch<React.SetStateAction<ColumnSelection>>;
+  availableColors: string[];
+}
+
+function ColumnMappingInterface({ excelData, csvData, selectedColumns, setSelectedColumns, availableColors }: ColumnMappingInterfaceProps) {
+  const addMapping = () => {
+    if (excelData && csvData) {
+      const nextColor = availableColors[selectedColumns.mappings.length % availableColors.length];
+      const newMapping: ColumnMapping = {
+        excel: excelData.headers[0] || '',
+        csv: csvData.headers[0] || '',
+        color: nextColor
+      };
+      
+      setSelectedColumns(prev => ({
+        ...prev,
+        mappings: [...prev.mappings, newMapping]
+      }));
+    }
+  };
+
+  const removeMapping = (index: number) => {
+    setSelectedColumns(prev => ({
+      ...prev,
+      mappings: prev.mappings.filter((_, i) => i !== index)
+    }));
+  };
+
+  const updateMapping = (index: number, field: 'excel' | 'csv', value: string) => {
+    setSelectedColumns(prev => ({
+      ...prev,
+      mappings: prev.mappings.map((mapping, i) => 
+        i === index ? { ...mapping, [field]: value } : mapping
+      )
+    }));
+  };
+
+  return (
+    <Box>
+      <Box sx={{ mb: 3, textAlign: 'center' }}>
+        <Button 
+          variant="contained"
+          onClick={addMapping}
+          disabled={!excelData || !csvData}
+          startIcon={<CompareArrows />}
+          size="large"
+        >
+          Adaugă Mapare
+        </Button>
+      </Box>
+      
+      <Stack spacing={2}>
+        {selectedColumns.mappings.map((mapping, index) => (
+          <Paper 
+            key={index} 
+            elevation={2} 
+            sx={{ 
+              p: 2, 
+              borderLeft: `4px solid ${mapping.color}`,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 2,
+              flexWrap: 'wrap'
+            }}
+          >
+            <FormControl sx={{ minWidth: 200, flex: 1 }}>
+              <InputLabel>Coloana Excel</InputLabel>
+              <Select
+                value={mapping.excel}
+                onChange={(e) => updateMapping(index, 'excel', e.target.value)}
+                label="Coloana Excel"
+              >
+                <MenuItem value="">
+                  <em>Selectați coloana Excel...</em>
+                </MenuItem>
+                {excelData?.headers.map(header => (
+                  <MenuItem key={header} value={header}>{header}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            
+            <CompareArrows color="primary" />
+            
+            <FormControl sx={{ minWidth: 200, flex: 1 }}>
+              <InputLabel>Coloana CSV</InputLabel>
+              <Select
+                value={mapping.csv}
+                onChange={(e) => updateMapping(index, 'csv', e.target.value)}
+                label="Coloana CSV"
+              >
+                <MenuItem value="">
+                  <em>Selectați coloana CSV...</em>
+                </MenuItem>
+                {csvData?.headers.map(header => (
+                  <MenuItem key={header} value={header}>{header}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            
+            <Tooltip title="Șterge maparea">
+              <IconButton 
+                color="error"
+                onClick={() => removeMapping(index)}
+                size="large"
+              >
+                <Delete />
+              </IconButton>
+            </Tooltip>
+          </Paper>
+        ))}
+      </Stack>
+      
+      {selectedColumns.mappings.length === 0 && (
+        <Alert severity="info" sx={{ mt: 2 }}>
+          Nu există mapări de coloane. Adăugați cel puțin o mapare pentru a compara fișierele.
+        </Alert>
+      )}
+    </Box>
+  );
+}
+
+// Data Table Component for preview
+interface DataTableProps {
+  headers: string[];
+  records: { [key: string]: string }[];
+}
+
+function DataTable({ headers, records }: DataTableProps) {
+  return (
+    <table className="data-table">
+      <thead>
+        <tr>
+          <th className="row-number">#</th>
+          {headers.map((header) => (
+            <th key={header}>{header}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {records.map((record, index) => (
+          <tr key={index}>
+            <td className="row-number">{index + 1}</td>
+            {headers.map((header) => (
+              <td key={header}>{record[header] || ''}</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+// Comparison Results Table Component
+interface ComparisonResultsTableProps {
+  result: ComparisonResult;
+  mappings: ColumnMapping[];
+}
+
+function ComparisonResultsTable({ result, mappings }: ComparisonResultsTableProps) {
+  return (
+    <div className="comparison-tables">
+      {result.matches.length > 0 && (
+        <div className="comparison-table-section">
+          <h3>Comparări Rânduri ({result.matches.length} rânduri)</h3>
+        <div className="table-container">
+            <table className="comparison-table">
+            <thead>
+              <tr>
+                  <th className="row-number">Rând Excel</th>
+                  <th className="status-col">Status</th>
+                  <th className="file-section-header excel-section" colSpan={mappings.length}>
+                    Excel Data
+                  </th>
+                  <th className="row-number separator-col">Rând CSV</th>
+                  <th className="file-section-header csv-section" colSpan={mappings.length}>
+                    CSV Data
+                  </th>
+                  <th className="differences-col">Diferențe</th>
+              </tr>
+              <tr>
+                  <th className="row-number"></th>
+                  <th className="status-col"></th>
+                  {mappings.map((mapping) => (
+                    <th key={`excel-${mapping.excel}`} className="excel-col" style={{ backgroundColor: mapping.color + '20' }}>
+                      {mapping.excel}
+                    </th>
+                  ))}
+                  <th className="row-number separator-col"></th>
+                  {mappings.map((mapping) => (
+                    <th key={`csv-${mapping.csv}`} className="csv-col" style={{ backgroundColor: mapping.color + '20' }}>
+                      {mapping.csv}
+                    </th>
+                  ))}
+                  <th className="differences-col"></th>
+              </tr>
+            </thead>
+            <tbody>
+                {result.matches.map((match, index) => (
+                  <tr key={index} className={match.differences.length === 0 ? 'perfect-match' : 'has-differences'}>
+                    <td className="row-number">{match.rowIndex + 1}</td>
+                    <td className="status-col">
+                      <span className={`status-indicator ${match.differences.length === 0 ? 'match' : 'diff'}`}>
+                        {match.differences.length === 0 ? 
+                          <><Check sx={{ mr: 1 }} /> Potrivire</> : 
+                          <><ErrorIcon sx={{ mr: 1 }} /> Diferență</>
+                        }
+                      </span>
+                    </td>
+                    {mappings.map((mapping) => (
+                      <td key={`excel-${mapping.excel}`} className="excel-cell" style={{ backgroundColor: mapping.color + '10' }}>
+                        {match.excelRow[mapping.excel] || ''}
+                      </td>
+                    ))}
+                    <td className="row-number separator-col">{match.csvRowIndex + 1}</td>
+                    {mappings.map((mapping) => (
+                      <td key={`csv-${mapping.csv}`} className="csv-cell" style={{ backgroundColor: mapping.color + '10' }}>
+                        {match.csvRow[mapping.csv] || ''}
+                      </td>
+                    ))}
+                    <td className="differences-col">
+                      {match.differences.length > 0 && (
+                        <ul className="differences-list">
+                          {match.differences.map((diff, i) => (
+                            <li key={i}>{diff}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      )}
+      
+      {result.onlyInExcel.length > 0 && (
+        <div className="comparison-table-section">
+          <h3>Doar în Excel ({result.onlyInExcel.length} rânduri)</h3>
+        <div className="table-container">
+            <table className="comparison-table">
+            <thead>
+              <tr>
+                  <th className="row-number">Rând</th>
+                  {mappings.map((mapping) => (
+                    <th key={mapping.excel} className="excel-col" style={{ backgroundColor: mapping.color + '20' }}>
+                      {mapping.excel}
+                    </th>
+                  ))}
+              </tr>
+            </thead>
+            <tbody>
+                {result.onlyInExcel.map((item, index) => (
+                  <tr key={index} className="only-excel">
+                    <td className="row-number">{item.rowIndex + 1}</td>
+                    {mappings.map((mapping) => (
+                      <td key={mapping.excel} className="excel-cell" style={{ backgroundColor: mapping.color + '10' }}>
+                        {item.row[mapping.excel] || ''}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      )}
+
+      {result.onlyInCsv.length > 0 && (
+        <div className="comparison-table-section">
+          <h3>Doar în CSV ({result.onlyInCsv.length} rânduri)</h3>
+          <div className="table-container">
+            <table className="comparison-table">
+              <thead>
+                <tr>
+                  <th className="row-number">Rând</th>
+                  {mappings.map((mapping) => (
+                    <th key={mapping.csv} className="csv-col" style={{ backgroundColor: mapping.color + '20' }}>
+                      {mapping.csv}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {result.onlyInCsv.map((item, index) => (
+                  <tr key={index} className="only-csv">
+                    <td className="row-number">{item.rowIndex + 1}</td>
+                    {mappings.map((mapping) => (
+                      <td key={mapping.csv} className="csv-cell" style={{ backgroundColor: mapping.color + '10' }}>
+                        {item.row[mapping.csv] || ''}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
     </div>
   );
 }
 
-// Side-by-side comparison component
-interface SideBySideComparisonProps {
-  result: ComparisonResult;
-  onRowClick: (matchKey: string) => void;
-  highlightedMatchKey: string | null;
-  setHighlightedMatchKey: (key: string | null) => void;
-  formatAmount: (amount: string) => string;
-  createMatchKey: (cif: string, nrFactur: string) => string;
+// Fullscreen Table Modal Component
+interface FullscreenTableModalProps {
+  excelData: ExcelParseResult | null;
+  csvData: CSVParseResult | null;
+  selectedColumns: ColumnSelection;
+  setSelectedColumns: React.Dispatch<React.SetStateAction<ColumnSelection>>;
+  onClose: () => void;
 }
 
-function SideBySideComparison({ 
-  result, 
-  onRowClick, 
-  highlightedMatchKey, 
-  setHighlightedMatchKey,
-  formatAmount,
-  createMatchKey 
-}: SideBySideComparisonProps) {
-  
-  const prepareRecordsForComparison = () => {
-    // Create separate arrays for each column - only include records that actually exist in that source
-    const excelRecords: Array<{record: ExcelInvoiceRecord; status: string; statusLabel: string; sortPriority: number; matchKey: string; differences?: string[]}> = [];
-    const anafRecords: Array<{record: ANAFInvoiceRecord; status: string; statusLabel: string; sortPriority: number; matchKey: string; differences?: string[]}> = [];
-    
-    // Add perfect matches - these exist in both files
-    result.perfectMatches.forEach(match => {
-      const matchKey = createMatchKey(match.excelRecord.cifEmitent, match.excelRecord.nrFactur);
-      const statusLabel = match.matchType === 'exact' ? '✓ Potrivire Exactă' : '✓ Potrivire Factură';
-      
-      excelRecords.push({
-        record: match.excelRecord,
-        status: 'perfect-match',
-        statusLabel: statusLabel,
-        sortPriority: 4,
-        matchKey: matchKey
-      });
-      anafRecords.push({
-        record: match.csvRecord,
-        status: 'perfect-match',
-        statusLabel: statusLabel,
-        sortPriority: 4,
-        matchKey: matchKey
-      });
-    });
-    
-    // Add transaction differences - these exist in both files but only differ in company/CIF
-    result.transactionDifferences.forEach(diff => {
-      const matchKey = createMatchKey(diff.excelRecord.cifEmitent, diff.excelRecord.nrFactur);
-      const statusLabel = diff.matchType === 'exact' ? '🔄 Diferență Tranzacție' : '🔄 Diferență Tranzacție';
-      
-      excelRecords.push({
-        record: diff.excelRecord,
-        status: 'transaction-difference',
-        statusLabel: statusLabel,
-        sortPriority: 3,
-        differences: diff.differences,
-        matchKey: matchKey
-      });
-      anafRecords.push({
-        record: diff.csvRecord,
-        status: 'transaction-difference',
-        statusLabel: statusLabel,
-        sortPriority: 3,
-        differences: diff.differences,
-        matchKey: matchKey
-      });
-    });
+function FullscreenTableModal({ excelData, csvData, selectedColumns, setSelectedColumns, onClose }: FullscreenTableModalProps) {
+  const [modalMappings, setModalMappings] = useState<ColumnMapping[]>(selectedColumns.mappings);
+  const [selectedExcelColumn, setSelectedExcelColumn] = useState<string | null>(null);
+  const [selectedCsvColumn, setSelectedCsvColumn] = useState<string | null>(null);
+  const [availableColors] = useState<string[]>([
+    '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', 
+    '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9'
+  ]);
 
-    // Add value differences - these exist in both files but with different values
-    result.valueDifferences.forEach(diff => {
-      const matchKey = createMatchKey(diff.excelRecord.cifEmitent, diff.excelRecord.nrFactur);
-      const statusLabel = diff.matchType === 'exact' ? '⚠ Diferențe Exacte' : '⚠ Diferențe Factură';
-      
-      excelRecords.push({
-        record: diff.excelRecord,
-        status: 'value-difference',
-        statusLabel: statusLabel,
-        sortPriority: 2,
-        differences: diff.differences,
-        matchKey: matchKey
-      });
-      anafRecords.push({
-        record: diff.csvRecord,
-        status: 'value-difference',
-        statusLabel: statusLabel,
-        sortPriority: 2,
-        differences: diff.differences,
-        matchKey: matchKey
-      });
-    });
-    
-    // Add missing from CSV/ANAF - these exist ONLY in Excel
-    result.missingFromCSV.forEach(record => {
-      excelRecords.push({
-        record: record,
-        status: 'missing-from-csv',
-        statusLabel: '⚠ Lipsă ANAF',
-        sortPriority: 1,
-        matchKey: createMatchKey(record.cifEmitent, record.nrFactur)
-      });
-      // Note: Do NOT add these to anafRecords since they don't exist in ANAF
-    });
-    
-    // Add missing from Excel - these exist ONLY in ANAF  
-    result.missingFromExcel.forEach(record => {
-      anafRecords.push({
-        record: record,
-        status: 'missing-from-excel',
-        statusLabel: '⚠ Lipsă Excel',
-        sortPriority: 1,
-        matchKey: createMatchKey(record.cifEmitent, record.nrFactur)
-      });
-      // Note: Do NOT add these to excelRecords since they don't exist in Excel
-    });
-    
-    // Sort by priority (errors first), then by date, then by invoice number
-    const sortRecords = <T extends {record: {dataEmitere: string; nrFactur: string}; sortPriority: number}>(records: T[]) => {
-      return records.sort((a, b) => {
-        if (a.sortPriority !== b.sortPriority) {
-          return a.sortPriority - b.sortPriority;
-        }
-        const dateA = new Date(a.record.dataEmitere);
-        const dateB = new Date(b.record.dataEmitere);
-        if (dateB.getTime() !== dateA.getTime()) {
-          return dateB.getTime() - dateA.getTime();
-        }
-        return a.record.nrFactur.localeCompare(b.record.nrFactur);
-      });
-    };
-    
-    return {
-      excelRecords: sortRecords(excelRecords),
-      anafRecords: sortRecords(anafRecords)
-    };
+  const handleExcelColumnClick = (columnName: string) => {
+    if (selectedCsvColumn) {
+      // Create mapping
+      const nextColor = availableColors[modalMappings.length % availableColors.length];
+      const newMapping: ColumnMapping = {
+        excel: columnName,
+        csv: selectedCsvColumn,
+        color: nextColor
+      };
+      setModalMappings(prev => [...prev, newMapping]);
+      setSelectedExcelColumn(null);
+      setSelectedCsvColumn(null);
+    } else {
+      setSelectedExcelColumn(columnName);
+    }
   };
 
-  const { excelRecords, anafRecords } = prepareRecordsForComparison();
+  const handleCsvColumnClick = (columnName: string) => {
+    if (selectedExcelColumn) {
+      // Create mapping
+      const nextColor = availableColors[modalMappings.length % availableColors.length];
+      const newMapping: ColumnMapping = {
+        excel: selectedExcelColumn,
+        csv: columnName,
+        color: nextColor
+      };
+      setModalMappings(prev => [...prev, newMapping]);
+      setSelectedExcelColumn(null);
+      setSelectedCsvColumn(null);
+    } else {
+      setSelectedCsvColumn(columnName);
+    }
+  };
 
-  const renderTableRow = (item: {record: ExcelInvoiceRecord | ANAFInvoiceRecord; status: string; statusLabel: string; matchKey: string; differences?: string[]}, index: number, type: 'excel' | 'anaf') => {
-    const record = item.record;
-    const statusClass = item.status;
-    const rowClass = `record-row ${statusClass} ${highlightedMatchKey === item.matchKey ? 'highlighted-match' : ''}`;
-    const isClickable = statusClass === 'value-difference' || statusClass === 'transaction-difference';
-    
-    return (
-      <tr 
-        key={`${type}-${index}`}
-        className={rowClass}
-        data-match-key={item.matchKey}
-        data-index={index}
-        onClick={isClickable ? () => onRowClick(item.matchKey) : undefined}
-        onMouseEnter={() => setHighlightedMatchKey(item.matchKey)}
-        onMouseLeave={() => setHighlightedMatchKey(null)}
-        style={{ cursor: isClickable ? 'pointer' : 'default' }}
-      >
-        <td className="status-cell">
-          <span className={`status-indicator ${statusClass}`} title={item.differences ? item.differences.join('\n') : ''}>
-            {item.statusLabel}
-          </span>
-        </td>
-        <td title={record.nrFactur}>{record.nrFactur}</td>
-        {type === 'anaf' && (
-          <td className="transaction-type">
-            {'transactionType' in record ? 
-              (record.transactionType === 'V' ? 'V' : 'C') : 
-              '-'
-            }
-          </td>
-        )}
-        <td>{record.dataEmitere}</td>
-        <td title={record.denumireEmitent}>{record.denumireEmitent}</td>
-        <td>{record.cifEmitent}</td>
-        <td>{record.cotaTVA}%</td>
-        <td className="amount">{formatAmount(record.baza)}</td>
-      </tr>
+  const removeMapping = (index: number) => {
+    setModalMappings(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const clearSelection = () => {
+    setSelectedExcelColumn(null);
+    setSelectedCsvColumn(null);
+  };
+
+  const handleClose = () => {
+    // Update the main page mappings with modal mappings
+    setSelectedColumns(prev => ({
+      ...prev,
+      mappings: modalMappings
+    }));
+    onClose();
+  };
+
+  return (
+    <div className="fullscreen-modal-overlay" onClick={handleClose}>
+      <div className="fullscreen-modal-content" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h2>Tabelele Complete</h2>
+          <IconButton 
+            onClick={handleClose} 
+            sx={{ 
+              backgroundColor: '#4caf50',
+              color: 'white',
+              borderRadius: '50%',
+              padding: '8px',
+              '&:hover': {
+                backgroundColor: '#45a049'
+              }
+            }}
+          >
+            <Check />
+          </IconButton>
+        </div>
+        
+        <div className="modal-mapping-controls">
+          <div className="mapping-instructions">
+            <p>Click pe o coloană Excel, apoi pe o coloană CSV pentru a le mapa. Click pe o mapare pentru a o șterge.</p>
+            {(selectedExcelColumn || selectedCsvColumn) && (
+              <div className="selection-status">
+                <span>Selectat: {selectedExcelColumn || selectedCsvColumn}</span>
+                <button className="clear-selection-btn" onClick={clearSelection}>Anulează</button>
+              </div>
+            )}
+          </div>
+          
+          {modalMappings.length > 0 && (
+            <div className="modal-mappings-display">
+              <h4>Mapări Active:</h4>
+              <div className="mappings-list">
+                {modalMappings.map((mapping, index) => (
+                  <div 
+                    key={index} 
+                    className="mapping-item" 
+                    style={{ borderLeft: `4px solid ${mapping.color}` }}
+                    onClick={() => removeMapping(index)}
+                  >
+                    <span className="mapping-text">
+                      {mapping.excel} <CompareArrows sx={{ mx: 1, fontSize: 12 }} /> {mapping.csv}
+                    </span>
+                    <Check sx={{ fontSize: 14, color: 'green' }} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+        
+        <div className="modal-tables-container">
+          {excelData && (
+            <div className="modal-table-section">
+              <h3>Excel Data ({excelData.records.length} rânduri)</h3>
+              <div className="modal-table-container">
+                <ModalDataTable 
+                  headers={excelData.headers} 
+                  records={excelData.records} 
+                  mappings={modalMappings}
+                  selectedColumn={selectedExcelColumn}
+                  onColumnClick={handleExcelColumnClick}
+                  type="excel"
+                />
+              </div>
+            </div>
+          )}
+          
+          {csvData && (
+            <div className="modal-table-section">
+              <h3>CSV Data ({csvData.records.length} rânduri)</h3>
+              <div className="modal-table-container">
+                <ModalDataTable 
+                  headers={csvData.headers} 
+                  records={csvData.records} 
+                  mappings={modalMappings}
+                  selectedColumn={selectedCsvColumn}
+                  onColumnClick={handleCsvColumnClick}
+                  type="csv"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Modal Data Table Component with clickable headers
+interface ModalDataTableProps {
+  headers: string[];
+  records: { [key: string]: string }[];
+  mappings: ColumnMapping[];
+  selectedColumn: string | null;
+  onColumnClick: (columnName: string) => void;
+  type: 'excel' | 'csv';
+}
+
+function ModalDataTable({ headers, records, mappings, selectedColumn, onColumnClick, type }: ModalDataTableProps) {
+  const getColumnColor = (columnName: string) => {
+    const mapping = mappings.find(m => 
+      type === 'excel' ? m.excel === columnName : m.csv === columnName
+    );
+    return mapping ? mapping.color : null;
+  };
+
+  const isColumnMapped = (columnName: string) => {
+    return mappings.some(m => 
+      type === 'excel' ? m.excel === columnName : m.csv === columnName
     );
   };
 
   return (
-    <div className="side-by-side-comparison">
-      <div className="left-panel">
-        <h4>Excel Contabilitate ({excelRecords.length} înregistrări)</h4>
-        <div className="table-container">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Status</th>
-                <th>Nr. Factură</th>
-                <th>Data Emitere</th>
-                <th>Denumire Emitent</th>
-                <th>CIF Emitent</th>
-                <th>Cota TVA</th>
-                <th>Bază TVA</th>
-              </tr>
-            </thead>
-            <tbody>
-              {excelRecords.map((item, index) => renderTableRow(item, index, 'excel'))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      
-      <div className="right-panel">
-        <h4>ANAF CSV ({anafRecords.length} înregistrări)</h4>
-        <div className="table-container">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Status</th>
-                <th>Nr. Factură</th>
-                <th>Tip</th>
-                <th>Data Emitere</th>
-                <th>Denumire Emitent</th>
-                <th>CIF Emitent</th>
-                <th>Cota TVA</th>
-                <th>Bază TVA</th>
-              </tr>
-            </thead>
-            <tbody>
-              {anafRecords.map((item, index) => renderTableRow(item, index, 'anaf'))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Comparison Modal component
-interface ComparisonModalProps {
-  difference: {excelRecord: ExcelInvoiceRecord; csvRecord: ANAFInvoiceRecord; differences: string[]};
-  onClose: () => void;
-  getFieldClass: (fieldName: string, differences: string[]) => string;
-  formatAmount: (amount: string) => string;
-}
-
-function ComparisonModal({ difference, onClose, getFieldClass, formatAmount }: ComparisonModalProps) {
-  const { excelRecord, csvRecord, differences } = difference;
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h3>Comparare Detaliată</h3>
-          <button className="modal-close" onClick={onClose}>&times;</button>
-        </div>
-        <div className="modal-body">
-          <div className="modal-differences-summary">
-            <h4>Diferențe Identificate ({differences.length})</h4>
-            <ul className="modal-differences-list">
-              {differences.map((diff: string, index: number) => (
-                <li key={index}>{diff}</li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="modal-comparison-row">
-            <div className="modal-record-card excel-record">
-              <h4>Excel Contabilitate</h4>
-              <div className="modal-field">
-                <span className="modal-field-label">Nr. Factură:</span>
-                <span className={`modal-field-value${getFieldClass('nrFactur', differences)}`}>{excelRecord.nrFactur}</span>
-              </div>
-              <div className="modal-field">
-                <span className="modal-field-label">Data Emitere:</span>
-                <span className={`modal-field-value${getFieldClass('Data emitere', differences)}`}>{excelRecord.dataEmitere}</span>
-              </div>
-              <div className="modal-field">
-                <span className="modal-field-label">Denumire:</span>
-                <span className={`modal-field-value${getFieldClass('Denumire', differences)}`}>{excelRecord.denumireEmitent}</span>
-              </div>
-              <div className="modal-field">
-                <span className="modal-field-label">CIF Emitent:</span>
-                <span className={`modal-field-value${getFieldClass('CIF', differences)}`}>{excelRecord.cifEmitent}</span>
-              </div>
-              <div className="modal-field">
-                <span className="modal-field-label">Cota TVA:</span>
-                <span className={`modal-field-value${getFieldClass('Cota TVA', differences)}`}>{excelRecord.cotaTVA}%</span>
-              </div>
-              <div className="modal-field">
-                <span className="modal-field-label">Bază TVA:</span>
-                <span className={`modal-field-value${getFieldClass('Baza TVA', differences)}`}>{formatAmount(excelRecord.baza)}</span>
-              </div>
-            </div>
-
-            <div className="modal-record-card anaf-record">
-              <h4>ANAF CSV</h4>
-              <div className="modal-field">
-                <span className="modal-field-label">Nr. Factură:</span>
-                <span className={`modal-field-value${getFieldClass('nrFactur', differences)}`}>{csvRecord.nrFactur}</span>
-              </div>
-              <div className="modal-field">
-                <span className="modal-field-label">Data Emitere:</span>
-                <span className={`modal-field-value${getFieldClass('Data emitere', differences)}`}>{csvRecord.dataEmitere}</span>
-              </div>
-              <div className="modal-field">
-                <span className="modal-field-label">Denumire:</span>
-                <span className={`modal-field-value${getFieldClass('Denumire', differences)}`}>{csvRecord.denumireEmitent}</span>
-              </div>
-              <div className="modal-field">
-                <span className="modal-field-label">CIF Emitent:</span>
-                <span className={`modal-field-value${getFieldClass('CIF', differences)}`}>{csvRecord.cifEmitent}</span>
-              </div>
-              <div className="modal-field">
-                <span className="modal-field-label">Cota TVA:</span>
-                <span className={`modal-field-value${getFieldClass('Cota TVA', differences)}`}>{csvRecord.cotaTVA}%</span>
-              </div>
-              <div className="modal-field">
-                <span className="modal-field-label">Bază TVA:</span>
-                <span className={`modal-field-value${getFieldClass('Baza TVA', differences)}`}>{formatAmount(csvRecord.baza)}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <table className="data-table modal-data-table">
+      <thead>
+        <tr>
+          <th className="row-number">#</th>
+          {headers.map((header) => {
+            const color = getColumnColor(header);
+            const isMapped = isColumnMapped(header);
+            const isSelected = selectedColumn === header;
+            
+            return (
+              <th 
+                key={header} 
+                className={`clickable-header ${isMapped ? 'mapped' : ''} ${isSelected ? 'selected' : ''}`}
+                style={{ 
+                  backgroundColor: color ? `${color}20` : undefined,
+                  borderLeft: color ? `4px solid ${color}` : undefined,
+                  cursor: 'pointer'
+                }}
+                onClick={() => onColumnClick(header)}
+                title={isMapped ? `Mapat cu ${type === 'excel' ? mappings.find(m => m.excel === header)?.csv : mappings.find(m => m.csv === header)?.excel}` : 'Click pentru a selecta'}
+              >
+                {header}
+                {isMapped && <Check sx={{ fontSize: 12 }} className="mapping-indicator" />}
+                {isSelected && <Visibility sx={{ fontSize: 12 }} className="selection-indicator" />}
+              </th>
+            );
+          })}
+        </tr>
+      </thead>
+      <tbody>
+        {records.map((record, index) => (
+          <tr key={index}>
+            <td className="row-number">{index + 1}</td>
+            {headers.map((header) => {
+              const color = getColumnColor(header);
+              return (
+                <td 
+                  key={header}
+                  style={{ 
+                    backgroundColor: color ? `${color}10` : undefined
+                  }}
+                >
+                  {record[header] || ''}
+                </td>
+              );
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
