@@ -46,7 +46,8 @@ import {
   TableChart,
   Analytics,
   Error as ErrorIcon,
-  Download
+  Download,
+  SwapHoriz
 } from '@mui/icons-material';
 
 interface FileState {
@@ -482,6 +483,40 @@ export default function Home() {
     saveAs(data, fileName);
   };
 
+  // CSV to XLS conversion and download function
+  const downloadCsvAsXls = () => {
+    if (!csvData) return;
+
+    const workbook = XLSX.utils.book_new();
+    
+    // Convert CSV data to Excel format
+    const csvDataForExcel = [csvData.headers];
+    csvData.records.forEach(record => {
+      const row = csvData.headers.map(header => record[header] || '');
+      csvDataForExcel.push(row);
+    });
+
+    const worksheet = XLSX.utils.aoa_to_sheet(csvDataForExcel);
+    
+    // Auto-size columns (basic implementation)
+    const colWidths = csvData.headers.map(header => {
+      const maxLength = Math.max(
+        header.length,
+        ...csvData.records.map(record => (record[header] || '').toString().length)
+      );
+      return { wch: Math.min(maxLength + 2, 50) }; // Cap at 50 characters
+    });
+    worksheet['!cols'] = colWidths;
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'CSV Data');
+
+    // Generate file and download
+    const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+    const data = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const fileName = `CSV_converted_${new Date().toISOString().split('T')[0]}.xlsx`;
+    saveAs(data, fileName);
+  };
+
   const canCompare = excelData && csvData && selectedColumns.mappings.length > 0;
 
   return (
@@ -687,21 +722,41 @@ export default function Home() {
           />
           
           <Box sx={{ mt: 4, textAlign: 'center' }}>
-            <Button
-              variant="contained"
-              color="success"
-              size="large"
-              startIcon={<Download />}
-              onClick={downloadComparisonReport}
-              sx={{ 
-                minWidth: 300,
-                py: 1.5,
-                fontSize: '1.1rem',
-                fontWeight: 600
-              }}
-            >
-              Descarcă Raport Comparare
-            </Button>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} justifyContent="center">
+              <Button
+                variant="contained"
+                color="success"
+                size="large"
+                startIcon={<Download />}
+                onClick={downloadComparisonReport}
+                sx={{ 
+                  minWidth: 280,
+                  py: 1.5,
+                  fontSize: '1.1rem',
+                  fontWeight: 600
+                }}
+              >
+                Descarcă Raport Comparare
+              </Button>
+              
+              {csvData && (
+                <Button
+                  variant="outlined"
+                  color="primary"
+                  size="large"
+                  startIcon={<SwapHoriz />}
+                  onClick={downloadCsvAsXls}
+                  sx={{ 
+                    minWidth: 250,
+                    py: 1.5,
+                    fontSize: '1.1rem',
+                    fontWeight: 600
+                  }}
+                >
+                  Descarcă CSV ca XLS
+                </Button>
+              )}
+            </Stack>
           </Box>
         </div>
       )}
